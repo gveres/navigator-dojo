@@ -16,7 +16,7 @@
   .dim { opacity: .55; font-size: 13px; }
   label { display: flex; gap: 10px; align-items: center; padding: 3px 0; cursor: pointer; }
   label b { width: 90px; }
-  #themes { display: flex; gap: 18px; margin: 4px 0 10px; }
+  #themes { display: flex; flex-wrap: wrap; gap: 2px 18px; margin: 4px 0 10px; }
   button { font: inherit; color: #070912; background: #3df; border: 0; border-radius: 8px;
     padding: 10px 18px; margin: 14px 10px 6px 0; cursor: pointer; font-weight: bold; }
   button:hover { box-shadow: 0 0 18px #3df; }
@@ -68,7 +68,14 @@ const THEMES = {
             glyph: { click: '🦋', dbl: '🐸', right: '🦊', middle: '🐢', drag: '🐝', scroll: '🐌', track: '🐇' } },
   keeb:   { name: 'Keeb', bg: ['#17181d', '#101114'], accent: '#fd3', calm: 1, wave: 'square', vol: .03, level: 'LAYER',
             glyph: { click: 'L', dbl: '2×', right: 'R', middle: 'M', drag: '✥', scroll: '⇅', track: '◉' } },
+  // ink/font/colors/glow/line are optional overrides for a light, typographic skin
+  paper:  { name: 'Paper · calm', bg: ['#f6f1e7', '#efe8da'], accent: '#2b2a27', calm: .6, wave: 'sine', vol: .04, level: 'Chapter',
+            ink: '#2b2a27', font: '"Iowan Old Style", Palatino, Georgia, serif', glow: 0, line: 1.25,
+            colors: { click: '#1f4e79', dbl: '#8a6100', right: '#9c2f4f', middle: '#2e6b3e', drag: '#b0541a', scroll: '#5b3f8c', track: '#2b2a27' },
+            glyph: { click: 'a', dbl: 'ff', right: '¶', middle: '†', drag: '&', scroll: '§', track: '~' } },
 };
+const MONO = 'ui-monospace, Menlo, monospace';
+const col = type => THEMES[theme].colors?.[type] ?? TYPES[type].color;
 
 const $ = id => document.getElementById(id);
 const cv = $('c'), g = cv.getContext('2d');
@@ -107,6 +114,8 @@ let enabled = store.get('dojo.skills', Object.keys(TYPES).filter(k => k !== 'mid
 let theme = store.get('dojo.theme', 'neon'); if (!THEMES[theme]) theme = 'neon';
 const checked = () => [...document.querySelectorAll('#skills input:checked')].map(i => i.value);
 function renderMenu() {
+  const TH = THEMES[theme], hud = $('hud').style;
+  hud.color = TH.ink ?? ''; hud.textShadow = TH.ink ? 'none' : ''; hud.fontFamily = TH.font ?? '';
   $('themes').innerHTML = Object.entries(THEMES).map(([k, t]) =>
     `<label><input type="radio" name="theme" value="${k}" ${k === theme ? 'checked' : ''}> ${t.name}</label>`).join('');
   $('skills').innerHTML = Object.entries(TYPES).map(([k, T]) =>
@@ -181,12 +190,12 @@ const under = (x, y) => S.targets.findLast(t => Math.hypot(x - t.x, y - t.y) <= 
 const remove = t => { S.targets.splice(S.targets.indexOf(t), 1); if (S.drag === t) S.drag = null; };
 
 function hit(t) {
-  const dt = S.t - t.born, s = stat(t.type), color = TYPES[t.type].color, TH = THEMES[theme];
+  const dt = S.t - t.born, s = stat(t.type), color = col(t.type), TH = THEMES[theme];
   s.hit++; s.time += dt;
   S.hits++; S.combo++; S.maxCombo = Math.max(S.maxCombo, S.combo);
   const pts = Math.round((100 + Math.max(0, 100 - dt * 25)) * (1 + Math.min(S.combo, 20) * .1));
   S.score += pts;
-  if (S.hits % 8 === 0) { S.level++; S.floats.push({ x: W / 2, y: H / 2, text: TH.level + ' ' + S.level, life: 1.2, color: '#fd3', big: true }); beep(880, .25, TH.wave, TH.vol); }
+  if (S.hits % 8 === 0) { S.level++; S.floats.push({ x: W / 2, y: H / 2, text: TH.level + ' ' + S.level, life: 1.2, color: TH.ink ?? '#fd3', big: true }); beep(880, .25, TH.wave, TH.vol); }
   for (let i = 0; i < 22; i++) { const a = rand(0, 6.28), v = rand(60, 320); S.parts.push({ x: t.x, y: t.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rand(.3, .7), color }); }
   S.floats.push({ x: t.x, y: t.y - t.r - 10, text: '+' + pts, life: .8, color });
   beep(440 * 2 ** (Math.min(S.combo, 24) / 12), .09, TH.wave, TH.vol);
@@ -278,7 +287,13 @@ function drawThemed(t, T, r, arc) {
   const glyph = THEMES[theme].glyph[t.type], hot = S.drag === t || (t.armed !== undefined && S.t - t.armed < DBL_WINDOW);
   g.save();
   g.textAlign = 'center'; g.textBaseline = 'middle';
-  if (theme === 'meadow') {
+  if (theme === 'paper') {   // a serif glyph in a hairline circle
+    if (t.p) arc(t.p);
+    circle(0, 0, r); softFill(hot ? .22 : .06); g.stroke();
+    g.font = `${r * 1.3}px ${THEMES.paper.font}`;
+    g.fillText(glyph, 0, r * .06);
+    if (t.type === 'scroll') { g.font = `${r * .6}px sans-serif`; g.fillText(t.dir > 0 ? '▼' : '▲', r, -r); }
+  } else if (theme === 'meadow') {
     if (t.p) arc(t.p);
     g.lineWidth = 2; circle(0, 0, r); softFill(hot ? .6 : .18); g.stroke();
     g.shadowBlur = 0; g.fillStyle = '#fff'; g.font = `${r * 1.15}px serif`;
@@ -303,7 +318,8 @@ function drawThemed(t, T, r, arc) {
 function drawTarget(t) {
   const T = TYPES[t.type], r = t.r, age = S.t - t.born, s = Math.min(1, age / .15);
   g.save();
-  g.strokeStyle = g.fillStyle = T.color; g.shadowColor = T.color; g.shadowBlur = 18; g.lineWidth = 3;
+  const TH = THEMES[theme], c = col(t.type);
+  g.strokeStyle = g.fillStyle = g.shadowColor = c; g.shadowBlur = TH.glow ?? 18; g.lineWidth = TH.line ?? 3;
   if (t.type === 'drag') {   // dock + guide line
     g.save(); g.setLineDash([6, 6]); g.globalAlpha = .7;
     if (theme === 'keeb') { g.beginPath(); g.roundRect(t.dx - r * 1.5, t.dy - r * 1.5, r * 3, r * 3, r * .4); } else circle(t.dx, t.dy, r * 1.6);
@@ -338,7 +354,7 @@ function drawTarget(t) {
     g.globalAlpha = .5; g.lineWidth = 2; g.shadowBlur = 0;
     g.beginPath(); g.arc(0, 0, r + 9, -Math.PI / 2, -Math.PI / 2 + Math.max(0, 1 - age / t.life) * Math.PI * 2); g.stroke();
   }
-  g.globalAlpha = .7; g.shadowBlur = 0; g.font = '11px ui-monospace, Menlo, monospace'; g.textAlign = 'center';
+  g.globalAlpha = .7; g.shadowBlur = 0; g.font = TH.font ? 'italic 13px ' + TH.font : '11px ' + MONO; g.textAlign = 'center';
   g.fillText(t.type, 0, r + 26);
   g.restore();
 }
@@ -380,7 +396,10 @@ function draw(now) {
   bg.addColorStop(0, TH.bg[0]); bg.addColorStop(1, TH.bg[1]);
   g.fillStyle = bg; g.fillRect(0, 0, W, H);
   if (theme === 'meadow') g.drawImage(meadowCv ??= paintMeadow(), 0, 0, W, H);
-  if (theme === 'keeb') {   // plate dot grid
+  if (theme === 'paper') {   // baseline grid
+    g.fillStyle = TH.ink; g.globalAlpha = .07;
+    for (let y = 44; y < H; y += 32) g.fillRect(0, y, W, 1);
+  } else if (theme === 'keeb') {   // plate dot grid
     g.fillStyle = '#fff'; g.globalAlpha = .07;
     for (let x = 24; x < W; x += 48) for (let y = 24; y < H; y += 48) g.fillRect(x - 1, y - 1, 2, 2);
   } else {
@@ -404,7 +423,7 @@ function draw(now) {
     g.textAlign = 'center';
     for (const f of S.floats) {
       g.globalAlpha = Math.min(1, f.life * 2); g.fillStyle = f.color;
-      g.font = (f.big ? 'bold 42px' : 'bold 15px') + ' ui-monospace, Menlo, monospace';
+      g.font = (TH.font ? (f.big ? 'italic 46px ' : 'italic 17px ') + TH.font : (f.big ? 'bold 42px ' : 'bold 15px ') + MONO);
       g.fillText(f.text, f.x, f.y);
     }
     g.restore(); g.globalAlpha = 1;
