@@ -5,6 +5,8 @@ scroll and cursor tracking. Four themes (Neon, Meadow, Keeb, Paper), two modes (
 
 Play it: https://navigator-dojo.open-paren.dev
 
+![The four themes in a 2x2 grid: Neon, Meadow, Keeb and Paper](docs/screenshot.png)
+
 Unofficial and fan-made. Not affiliated with or endorsed by ZSA.
 
 - The whole game is `site/index.html` — open it directly, no build step.
