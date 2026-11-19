@@ -1,5 +1,6 @@
 {
   "name": "navigator-dojo-site",
   "compatibility_date": "2026-11-18",
-  "assets": { "directory": "site" }
+  "assets": { "directory": "site" },
+  "routes": [{ "pattern": "navigator-dojo.open-paren.dev", "custom_domain": true }]
 }

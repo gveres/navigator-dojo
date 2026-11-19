@@ -3,7 +3,7 @@
 A small browser game for practising trackball / mouse-key actions: left click, double-click, right click, drag,
 scroll and cursor tracking. Three themes (Neon, Meadow, Keeb), two modes (Arcade 60s, Zen untimed).
 
-Play it: https://navigator-dojo-site.gabor-veres.workers.dev
+Play it: https://navigator-dojo.open-paren.dev
 
 Unofficial and fan-made. Not affiliated with or endorsed by ZSA.
 

@@ -1,6 +1,6 @@
 #!/bin/zsh --no-rcs
 # Publishes the game: the committed site/ (git archive, so nothing stray on disk ships) as static assets of the
-# Cloudflare Worker navigator-dojo-site (https://navigator-dojo-site.gabor-veres.workers.dev).
+# Cloudflare Worker navigator-dojo-site (https://navigator-dojo.open-paren.dev).
 # Needs `npx wrangler login` once.
 set -eu
 cd "$(dirname "$0")/.."
