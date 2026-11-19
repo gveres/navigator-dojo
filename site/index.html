@@ -16,7 +16,17 @@
   .dim { opacity: .55; font-size: 13px; }
   label { display: flex; gap: 10px; align-items: center; padding: 3px 0; cursor: pointer; }
   label b { width: 90px; }
-  #themes { display: flex; flex-wrap: wrap; gap: 2px 18px; margin: 4px 0 10px; }
+  .sec { font-size: 11px; letter-spacing: .25em; text-transform: uppercase; opacity: .55; margin: 10px 0 6px; }
+  #themes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 4px; }
+  .tile { flex-direction: column; gap: 2px; padding: 12px 4px 10px; border-radius: 10px; border: 2px solid #fff2;
+    opacity: .65; transition: .15s; }
+  .tile:hover { opacity: 1; }
+  .tile:has(input:checked) { opacity: 1; border-color: #3df; box-shadow: 0 0 18px #3df9; transform: translateY(-2px); }
+  .tile:has(input:focus-visible) { outline: 2px solid #fff; }
+  .tile input { position: absolute; opacity: 0; pointer-events: none; }
+  .tile span { font-size: 22px; line-height: 32px; letter-spacing: .12em; }
+  .tile b { width: auto; font-size: 14px; }
+  .tile small { opacity: .6; font-size: 11px; }
   button { font: inherit; color: #070912; background: #3df; border: 0; border-radius: 8px;
     padding: 10px 18px; margin: 14px 10px 6px 0; cursor: pointer; font-weight: bold; }
   button:hover { box-shadow: 0 0 18px #3df; }
@@ -37,7 +47,9 @@
   <p class="dim">Unofficial fan-made trackball trainer. Not affiliated with or endorsed by ZSA.</p>
   <p class="dim">Each shape wants a different action. Wrong action or empty click breaks the combo.</p>
   <div id="result"></div>
+  <div class="sec">Theme</div>
   <div id="themes"></div>
+  <div class="sec">Skills</div>
   <div id="skills"></div>
   <label style="margin-top:10px"><input type="checkbox" id="mute"> <b>sound off</b></label>
   <button id="arcade">Arcade · 60s</button><button id="zen" class="alt">Zen · no timer</button>
@@ -64,12 +76,12 @@ const SHAPE = { click: '●', dbl: '◎', right: '◆', middle: '▲', drag: '�
 // calm < 1 slows targets, lengthens their life and drops the screen shake
 const THEMES = {
   neon:   { name: 'Neon', bg: ['#070912', '#070912'], accent: '#3df', calm: 1, wave: 'triangle', vol: .07, level: 'LEVEL', glyph: SHAPE },
-  meadow: { name: 'Meadow · calm', bg: ['#0a1c2b', '#123420'], accent: '#ffe9a0', calm: .6, wave: 'sine', vol: .05, level: 'GLADE',
+  meadow: { name: 'Meadow', bg: ['#0a1c2b', '#123420'], accent: '#ffe9a0', calm: .6, wave: 'sine', vol: .05, level: 'GLADE',
             glyph: { click: '🦋', dbl: '🐸', right: '🦊', middle: '🐢', drag: '🐝', scroll: '🐌', track: '🐇' } },
   keeb:   { name: 'Keeb', bg: ['#17181d', '#101114'], accent: '#fd3', calm: 1, wave: 'square', vol: .03, level: 'LAYER',
             glyph: { click: 'L', dbl: '2×', right: 'R', middle: 'M', drag: '✥', scroll: '⇅', track: '◉' } },
   // ink/font/colors/glow/line are optional overrides for a light, typographic skin
-  paper:  { name: 'Paper · calm', bg: ['#f6f1e7', '#efe8da'], accent: '#2b2a27', calm: .6, wave: 'sine', vol: .04, level: 'Chapter',
+  paper:  { name: 'Paper', bg: ['#f6f1e7', '#efe8da'], accent: '#2b2a27', calm: .6, wave: 'sine', vol: .04, level: 'Chapter',
             ink: '#2b2a27', font: '"Iowan Old Style", Palatino, Georgia, serif', glow: 0, line: 1.25,
             colors: { click: '#1f4e79', dbl: '#8a6100', right: '#9c2f4f', middle: '#2e6b3e', drag: '#b0541a', scroll: '#5b3f8c', track: '#2b2a27' },
             glyph: { click: 'a', dbl: 'ff', right: '¶', middle: '†', drag: '&', scroll: '§', track: '~' } },
@@ -117,7 +129,9 @@ function renderMenu() {
   const TH = THEMES[theme], hud = $('hud').style;
   hud.color = TH.ink ?? ''; hud.textShadow = TH.ink ? 'none' : ''; hud.fontFamily = TH.font ?? '';
   $('themes').innerHTML = Object.entries(THEMES).map(([k, t]) =>
-    `<label><input type="radio" name="theme" value="${k}" ${k === theme ? 'checked' : ''}> ${t.name}</label>`).join('');
+    `<label class="tile" style='background:linear-gradient(${t.bg[0]},${t.bg[1]});color:${t.ink ?? '#dfe6ff'};font-family:${t.font ?? 'inherit'}'>
+       <input type="radio" name="theme" value="${k}" ${k === theme ? 'checked' : ''}>
+       <span>${t.glyph.click} ${t.glyph.right} ${t.glyph.track}</span><b>${t.name}</b><small>${t.calm < 1 ? 'calm' : 'lively'}</small></label>`).join('');
   $('skills').innerHTML = Object.entries(TYPES).map(([k, T]) =>
     `<label><input type="checkbox" value="${k}" ${enabled.includes(k) ? 'checked' : ''}>
      <b style="color:${T.color}">${THEMES[theme].glyph[k]} ${k}</b><span class="dim">${T.hint}</span></label>`).join('');
