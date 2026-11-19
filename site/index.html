@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Navigator Dojo — unofficial, not affiliated with or endorsed by ZSA</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #070912; color: #dfe6ff;
+    font: 15px/1.5 ui-monospace, Menlo, monospace; overflow: hidden; user-select: none; }
+  canvas { position: fixed; inset: 0; cursor: crosshair; }
+  #hud { position: fixed; top: 12px; left: 18px; right: 18px; display: flex; justify-content: space-between;
+    pointer-events: none; font-size: 18px; text-shadow: 0 0 10px #3df; }
+  #menu { position: fixed; inset: 0; display: grid; place-items: center; background: #070912cc; }
+  .card { width: min(560px, 90vw); padding: 28px 32px; border: 1px solid #3df5; border-radius: 14px;
+    background: #0c1022ee; box-shadow: 0 0 60px #3df2; }
+  h1 { margin: 0 0 4px; letter-spacing: .3em; font-size: 22px; color: #3df; text-shadow: 0 0 14px #3df; }
+  .dim { opacity: .55; font-size: 13px; }
+  label { display: flex; gap: 10px; align-items: center; padding: 3px 0; cursor: pointer; }
+  label b { width: 90px; }
+  #themes { display: flex; gap: 18px; margin: 4px 0 10px; }
+  button { font: inherit; color: #070912; background: #3df; border: 0; border-radius: 8px;
+    padding: 10px 18px; margin: 14px 10px 6px 0; cursor: pointer; font-weight: bold; }
+  button:hover { box-shadow: 0 0 18px #3df; }
+  button.alt { background: #a8f; }
+  table { border-collapse: collapse; margin: 8px 0 14px; width: 100%; font-size: 13px; }
+  td, th { text-align: right; padding: 2px 8px; }
+  td:first-child, th:first-child { text-align: left; }
+  #result:empty { display: none; }
+  #result { border-bottom: 1px solid #fff2; margin-bottom: 12px; }
+  .big { font-size: 26px; color: #fd3; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"><span id="hScore"></span><span id="hCombo"></span><span id="hTime"></span></div>
+<div id="menu"><div class="card">
+  <h1>NAVIGATOR DOJO</h1>
+  <p class="dim">Unofficial fan-made trackball trainer. Not affiliated with or endorsed by ZSA.</p>
+  <p class="dim">Each shape wants a different action. Wrong action or empty click breaks the combo.</p>
+  <div id="result"></div>
+  <div id="themes"></div>
+  <div id="skills"></div>
+  <label style="margin-top:10px"><input type="checkbox" id="mute"> <b>sound off</b></label>
+  <button id="arcade">Arcade · 60s</button><button id="zen" class="alt">Zen · no timer</button>
+  <div class="dim">Esc ends the round · M mutes · best arcade score: <span id="best">0</span></div>
+</div></div>
+
+<script>
+// Tuning knobs — the trackball and your OS settings are the real world, adjust to taste.
+const SCROLL_NEED = 400;   // wheel delta needed to fill a scroll target
+const DBL_WINDOW = 0.45;   // seconds allowed between the two clicks of a double-click
+const TRACK_HOLD = 1.2;    // seconds the cursor must stay on a track target
+const ROUND = 60;          // arcade length in seconds
+
+const TYPES = {
+  click:  { color: '#3df', hint: 'left click',                    slow: 1 },
+  dbl:    { color: '#fd3', hint: 'double-click',                  slow: 1.3 },
+  right:  { color: '#f4a', hint: 'right click',                   slow: 1 },
+  drag:   { color: '#f93', hint: 'drag into the dashed ring',     slow: 2 },
+  scroll: { color: '#a8f', hint: 'hover, scroll the arrow\'s way', slow: 2 },
+  track:  { color: '#fff', hint: 'follow it, no clicking',        slow: 2 },
+};
+const SHAPE = { click: '●', dbl: '◎', right: '◆', drag: '◐', scroll: '⇅', track: '◌' };
+// calm < 1 slows targets, lengthens their life and drops the screen shake
+const THEMES = {
+  neon:   { name: 'Neon', bg: ['#070912', '#070912'], accent: '#3df', calm: 1, wave: 'triangle', vol: .07, level: 'LEVEL', glyph: SHAPE },
+  meadow: { name: 'Meadow · calm', bg: ['#0a1c2b', '#123420'], accent: '#ffe9a0', calm: .6, wave: 'sine', vol: .05, level: 'GLADE',
+            glyph: { click: '🦋', dbl: '🐸', right: '🦊', drag: '🐝', scroll: '🐌', track: '🐇' } },
+  keeb:   { name: 'Keeb', bg: ['#17181d', '#101114'], accent: '#fd3', calm: 1, wave: 'square', vol: .03, level: 'LAYER',
+            glyph: { click: 'L', dbl: '2×', right: 'R', drag: '✥', scroll: '⇅', track: '◉' } },
+};
+
+const $ = id => document.getElementById(id);
+const cv = $('c'), g = cv.getContext('2d');
+const rand = (a, b) => a + Math.random() * (b - a);
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+let W, H, S = null, mx = 0, my = 0, muted = false, ac;
+const trail = [], stars = Array.from({ length: 140 }, () => ({ x: Math.random(), y: Math.random(), z: rand(.2, 1) }));
+
+function resize() {
+  const d = devicePixelRatio || 1;
+  W = innerWidth; H = innerHeight;
+  cv.width = W * d; cv.height = H * d;
+  g.setTransform(d, 0, 0, d, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+function beep(f, d = .08, type = 'sine', v = .07) {
+  if (muted) return;
+  try {
+    ac ??= new AudioContext();
+    const o = ac.createOscillator(), a = ac.createGain();
+    o.type = type; o.frequency.value = f;
+    a.gain.setValueAtTime(v, ac.currentTime);
+    a.gain.exponentialRampToValueAtTime(.0001, ac.currentTime + d);
+    o.connect(a).connect(ac.destination);
+    o.start(); o.stop(ac.currentTime + d);
+  } catch {}
+}
+
+// ---------- menu ----------
+let enabled = store.get('dojo.skills', Object.keys(TYPES));
+let theme = store.get('dojo.theme', 'neon'); if (!THEMES[theme]) theme = 'neon';
+const checked = () => [...document.querySelectorAll('#skills input:checked')].map(i => i.value);
+function renderMenu() {
+  $('themes').innerHTML = Object.entries(THEMES).map(([k, t]) =>
+    `<label><input type="radio" name="theme" value="${k}" ${k === theme ? 'checked' : ''}> ${t.name}</label>`).join('');
+  $('skills').innerHTML = Object.entries(TYPES).map(([k, T]) =>
+    `<label><input type="checkbox" value="${k}" ${enabled.includes(k) ? 'checked' : ''}>
+     <b style="color:${T.color}">${THEMES[theme].glyph[k]} ${k}</b><span class="dim">${T.hint}</span></label>`).join('');
+}
+renderMenu();
+$('themes').onchange = e => { enabled = checked(); theme = e.target.value; store.set('dojo.theme', theme); renderMenu(); };
+$('best').textContent = store.get('dojo.best', 0);
+const setMuted = v => { muted = v; $('mute').checked = v; store.set('dojo.muted', v); };
+setMuted(store.get('dojo.muted', false));
+$('mute').onchange = e => setMuted(e.target.checked);
+$('arcade').onclick = () => start('arcade');
+$('zen').onclick = () => start('zen');
+
+function start(mode) {
+  enabled = checked();
+  if (!enabled.length) enabled = ['click'];
+  store.set('dojo.skills', enabled);
+  S = { mode, t: 0, left: ROUND, score: 0, combo: 0, maxCombo: 0, hits: 0, misses: 0, level: 1,
+        targets: [], parts: [], floats: [], stats: {}, drag: null, shake: 0, over: false };
+  $('menu').style.display = 'none';
+}
+
+function end() {
+  S.over = true; S.drag = null;
+  const acc = S.hits + S.misses ? Math.round(100 * S.hits / (S.hits + S.misses)) : 0;
+  let best = store.get('dojo.best', 0), record = false;
+  if (S.mode === 'arcade' && S.score > best) { best = S.score; store.set('dojo.best', best); record = true; }
+  const rows = Object.entries(S.stats).map(([k, s]) => ({ k, ...s, avg: s.hit ? s.time / s.hit : null }));
+  const slowest = rows.filter(r => r.avg).sort((a, b) => b.avg - a.avg)[0];
+  $('result').innerHTML =
+    `<div class="big">${S.score}${record ? ' ★ new best' : ''}</div>
+     <div>accuracy ${acc}% · max combo ${S.maxCombo} · level ${S.level}</div>
+     <table><tr><th>skill</th><th>hit</th><th>miss</th><th>avg s</th><th></th></tr>` +
+    rows.map(r => `<tr><td style="color:${TYPES[r.k].color}">${THEMES[theme].glyph[r.k]} ${r.k}</td><td>${r.hit}</td><td>${r.miss}</td>
+      <td>${r.avg ? r.avg.toFixed(2) : '–'}</td><td class="dim">${r === slowest && rows.length > 1 ? '← slowest' : ''}</td></tr>`).join('') +
+    `</table>`;
+  $('best').textContent = best;
+  $('menu').style.display = '';
+}
+
+// ---------- game logic ----------
+function spawn() {
+  const type = enabled[Math.random() * enabled.length | 0];
+  const r = Math.max(16, 44 - S.level * 2.5) * (type === 'track' ? 1.25 : 1);
+  const far = (x, y, d) => S.targets.every(o => Math.hypot(o.x - x, o.y - y) > d && (o.dx === undefined || Math.hypot(o.dx - x, o.dy - y) > d));
+  const place = () => {
+    let x, y, i = 0;
+    do { x = rand(r + 50, W - r - 50); y = rand(r + 80, H - r - 60); } while (!far(x, y, 130) && ++i < 30);
+    return [x, y];
+  };
+  const [x, y] = place();
+  const t = { type, x, y, r, born: S.t, p: 0, vx: 0, vy: 0,
+    life: S.mode === 'zen' ? Infinity : Math.max(2.2, 5.5 - S.level * .3) * TYPES[type].slow / THEMES[theme].calm };
+  // drag and scroll targets stay put: on a trackball, scroll mode means the ball can't steer
+  const speed = THEMES[theme].calm * (type === 'track' ? 70 + S.level * 10
+    : type === 'drag' || type === 'scroll' ? 0
+    : Math.min(120, Math.max(0, S.level - 2) * 14));
+  const a = rand(0, Math.PI * 2);
+  t.vx = Math.cos(a) * speed; t.vy = Math.sin(a) * speed;
+  if (type === 'scroll') t.dir = Math.random() < .5 ? 1 : -1;
+  if (type === 'drag') {
+    let i = 0;
+    do { [t.dx, t.dy] = place(); } while (Math.hypot(t.dx - x, t.dy - y) < 200 && ++i < 30);
+  }
+  S.targets.push(t);
+}
+
+const stat = k => S.stats[k] ??= { hit: 0, miss: 0, time: 0 };
+const under = (x, y) => S.targets.findLast(t => Math.hypot(x - t.x, y - t.y) <= t.r + 4);
+const remove = t => { S.targets.splice(S.targets.indexOf(t), 1); if (S.drag === t) S.drag = null; };
+
+function hit(t) {
+  const dt = S.t - t.born, s = stat(t.type), color = TYPES[t.type].color, TH = THEMES[theme];
+  s.hit++; s.time += dt;
+  S.hits++; S.combo++; S.maxCombo = Math.max(S.maxCombo, S.combo);
+  const pts = Math.round((100 + Math.max(0, 100 - dt * 25)) * (1 + Math.min(S.combo, 20) * .1));
+  S.score += pts;
+  if (S.hits % 8 === 0) { S.level++; S.floats.push({ x: W / 2, y: H / 2, text: TH.level + ' ' + S.level, life: 1.2, color: '#fd3', big: true }); beep(880, .25, TH.wave, TH.vol); }
+  for (let i = 0; i < 22; i++) { const a = rand(0, 6.28), v = rand(60, 320); S.parts.push({ x: t.x, y: t.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rand(.3, .7), color }); }
+  S.floats.push({ x: t.x, y: t.y - t.r - 10, text: '+' + pts, life: .8, color });
+  beep(440 * 2 ** (Math.min(S.combo, 24) / 12), .09, TH.wave, TH.vol);
+  remove(t);
+}
+
+function miss(t, text, gone) {
+  const calm = THEMES[theme].calm < 1;
+  S.misses++; S.combo = 0; S.shake = calm ? 0 : .25;
+  if (t) stat(t.type).miss++;
+  if (S.mode === 'zen') S.level = Math.max(1, S.level - 1);   // zen adapts down so it stays learnable
+  S.floats.push({ x: t ? t.x : mx, y: (t ? t.y - t.r : my) - 12, text, life: 1, color: '#f55' });
+  calm ? beep(196, .2, 'sine', .04) : beep(130, .15, 'sawtooth', .05);
+  if (gone) remove(t);
+}
+
+cv.addEventListener('mousedown', e => {
+  e.preventDefault();
+  if (!S || S.over) return;
+  const t = under(e.offsetX, e.offsetY), b = e.button;
+  if (!t) return miss(null, 'miss');
+  const want = { click: 0, dbl: 0, drag: 0, right: 2 }[t.type];
+  if (b !== want) return miss(t, TYPES[t.type].hint + '!');
+  if (t.type === 'dbl') {
+    if (t.armed !== undefined && S.t - t.armed < DBL_WINDOW) hit(t);
+    else { t.armed = S.t; beep(600, .04); }
+  } else if (t.type === 'drag') {
+    S.drag = t; t.ox = e.offsetX - t.x; t.oy = e.offsetY - t.y; beep(300, .05);
+  } else hit(t);
+});
+addEventListener('mouseup', () => {
+  const t = S && S.drag;
+  if (!t) return;
+  S.drag = null;
+  if (Math.hypot(t.x - t.dx, t.y - t.dy) < t.r * 1.6) hit(t); else miss(t, 'dropped');
+});
+addEventListener('mousemove', e => {
+  mx = e.clientX; my = e.clientY;
+  trail.push({ x: mx, y: my }); if (trail.length > 28) trail.shift();
+  if (S && S.drag) { S.drag.x = mx - S.drag.ox; S.drag.y = my - S.drag.oy; }
+});
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (!S || S.over) return;
+  const t = under(e.offsetX, e.offsetY);
+  if (!t || t.type !== 'scroll') return;
+  const dy = e.deltaY * (e.deltaMode === 1 ? 16 : 1);
+  t.p = Math.max(0, t.p + Math.sign(dy) * t.dir * Math.min(Math.abs(dy), 60) / SCROLL_NEED);
+  if (t.p >= 1) hit(t);
+}, { passive: false });
+addEventListener('contextmenu', e => e.preventDefault());
+addEventListener('auxclick', e => e.preventDefault());
+addEventListener('keydown', e => {
+  if (e.key === 'Escape' && S && !S.over) end();
+  if (e.key === 'm' || e.key === 'M') setMuted(!muted);
+});
+
+function update(dt) {
+  S.t += dt;
+  if (S.mode === 'arcade' && (S.left -= dt) <= 0) return end();
+  const want = S.mode === 'zen' ? 1 : Math.min(3, 1 + ((S.level - 1) / 3 | 0));
+  while (S.targets.length < want) spawn();
+  for (const t of [...S.targets]) {
+    if (t !== S.drag) {
+      t.x += t.vx * dt; t.y += t.vy * dt;
+      if (t.x < t.r || t.x > W - t.r) { t.vx *= -1; t.x = Math.min(W - t.r, Math.max(t.r, t.x)); }
+      if (t.y < t.r + 50 || t.y > H - t.r) { t.vy *= -1; t.y = Math.min(H - t.r, Math.max(t.r + 50, t.y)); }
+    }
+    if (t.type === 'track') {
+      t.p = Math.hypot(mx - t.x, my - t.y) <= t.r ? t.p + dt / TRACK_HOLD : Math.max(0, t.p - dt * .4);
+      if (t.p >= 1) { hit(t); continue; }
+    }
+    if (t !== S.drag && S.t - t.born > t.life) miss(t, 'too slow', true);
+  }
+  for (const p of S.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= .96; p.vy *= .96; p.life -= dt; }
+  for (const f of S.floats) { f.y -= 30 * dt; f.life -= dt; }
+  S.parts = S.parts.filter(p => p.life > 0);
+  S.floats = S.floats.filter(f => f.life > 0);
+  S.shake = Math.max(0, S.shake - dt);
+}
+
+// ---------- rendering ----------
+const circle = (x, y, r) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); };
+const softFill = a => { g.globalAlpha = a; g.fill(); g.globalAlpha = 1; };
+
+// Meadow and Keeb skins; returns false when the neon drawing should be used instead.
+function drawThemed(t, T, r, arc) {
+  if (theme === 'neon' || (theme === 'keeb' && t.type === 'scroll')) return false;   // keeb scroll = the neon dial, an encoder knob
+  const glyph = THEMES[theme].glyph[t.type], hot = S.drag === t || (t.armed !== undefined && S.t - t.armed < DBL_WINDOW);
+  g.save();
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  if (theme === 'meadow') {
+    if (t.p) arc(t.p);
+    g.lineWidth = 2; circle(0, 0, r); softFill(hot ? .6 : .18); g.stroke();
+    g.shadowBlur = 0; g.fillStyle = '#fff'; g.font = `${r * 1.15}px serif`;
+    g.fillText(glyph, 0, r * .08);
+    if (t.type === 'scroll') { g.fillStyle = T.color; g.font = `bold ${r * .6}px sans-serif`; g.fillText(t.dir > 0 ? '▼' : '▲', r, -r); }
+  } else if (t.type === 'track') {   // a trackball
+    const gr = g.createRadialGradient(-r * .35, -r * .35, r * .05, 0, 0, r);
+    gr.addColorStop(0, '#fff'); gr.addColorStop(.35, '#9aa3b5'); gr.addColorStop(1, '#2a2e3a');
+    g.fillStyle = gr; circle(0, 0, r); g.fill();
+    g.fillStyle = '#fd3'; arc(t.p);
+    g.setLineDash([5, 7]); circle(0, 0, r + 4); g.stroke();
+  } else {   // a keycap
+    g.beginPath(); g.roundRect(-r, -r, r * 2, r * 2, r * .3); softFill(.2); g.stroke();
+    g.beginPath(); g.roundRect(-r * .74, -r * .82, r * 1.48, r * 1.48, r * .22); softFill(hot ? .75 : .3);
+    g.shadowBlur = 0; g.fillStyle = '#fff'; g.font = `bold ${r * .7}px ui-monospace, Menlo, monospace`;
+    g.fillText(glyph, 0, -r * .08);
+  }
+  g.restore();
+  return true;
+}
+
+function drawTarget(t) {
+  const T = TYPES[t.type], r = t.r, age = S.t - t.born, s = Math.min(1, age / .15);
+  g.save();
+  g.strokeStyle = g.fillStyle = T.color; g.shadowColor = T.color; g.shadowBlur = 18; g.lineWidth = 3;
+  if (t.type === 'drag') {   // dock + guide line
+    g.save(); g.setLineDash([6, 6]); g.globalAlpha = .7;
+    if (theme === 'keeb') { g.beginPath(); g.roundRect(t.dx - r * 1.5, t.dy - r * 1.5, r * 3, r * 3, r * .4); } else circle(t.dx, t.dy, r * 1.6);
+    g.stroke();
+    if (theme === 'meadow') { g.shadowBlur = 0; g.globalAlpha = 1; g.font = `${r * 1.4}px serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('🌸', t.dx, t.dy); }
+    g.globalAlpha = .25; g.beginPath(); g.moveTo(t.x, t.y); g.lineTo(t.dx, t.dy); g.stroke();
+    g.restore();
+  }
+  g.translate(t.x, t.y); g.scale(s, s);
+  const arc = p => { g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, r, -Math.PI / 2, -Math.PI / 2 + p * Math.PI * 2); g.closePath(); softFill(.45); };
+  if (!drawThemed(t, T, r, arc)) switch (t.type) {
+    case 'click': circle(0, 0, r); softFill(.25); g.stroke(); circle(0, 0, r * .25); g.fill(); break;
+    case 'dbl':
+      circle(0, 0, r); g.stroke(); circle(0, 0, r * .55); g.stroke();
+      if (t.armed !== undefined && S.t - t.armed < DBL_WINDOW) g.fill();
+      break;
+    case 'right': g.beginPath(); g.moveTo(0, -r); g.lineTo(r, 0); g.lineTo(0, r); g.lineTo(-r, 0); g.closePath(); softFill(.25); g.stroke(); break;
+    case 'drag':
+      circle(0, 0, r); softFill(S.drag === t ? .8 : .45); g.stroke();
+      g.beginPath(); for (const y of [-r * .25, 0, r * .25]) { g.moveTo(-r * .35, y); g.lineTo(r * .35, y); } g.stroke();
+      break;
+    case 'scroll':
+      arc(t.p); circle(0, 0, r); g.stroke();
+      g.beginPath();
+      for (const o of [-r * .25, r * .2]) { g.moveTo(-r * .35, (o - r * .15) * t.dir); g.lineTo(0, (o + r * .15) * t.dir); g.lineTo(r * .35, (o - r * .15) * t.dir); }
+      g.stroke();
+      break;
+    case 'track': arc(t.p); g.setLineDash([5, 7]); circle(0, 0, r); g.stroke(); g.setLineDash([]); break;
+  }
+  if (isFinite(t.life)) {   // remaining-time ring
+    g.globalAlpha = .5; g.lineWidth = 2; g.shadowBlur = 0;
+    g.beginPath(); g.arc(0, 0, r + 9, -Math.PI / 2, -Math.PI / 2 + Math.max(0, 1 - age / t.life) * Math.PI * 2); g.stroke();
+  }
+  g.globalAlpha = .7; g.shadowBlur = 0; g.font = '11px ui-monospace, Menlo, monospace'; g.textAlign = 'center';
+  g.fillText(t.type, 0, r + 26);
+  g.restore();
+}
+
+function draw(now) {
+  const TH = THEMES[theme], bg = g.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, TH.bg[0]); bg.addColorStop(1, TH.bg[1]);
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  if (theme === 'keeb') {   // plate dot grid
+    g.fillStyle = '#fff'; g.globalAlpha = .07;
+    for (let x = 24; x < W; x += 48) for (let y = 24; y < H; y += 48) g.fillRect(x - 1, y - 1, 2, 2);
+  } else {
+    const fly = theme === 'meadow';   // stars become slow, twinkling fireflies
+    g.fillStyle = fly ? '#ffe9a0' : '#9bf';
+    for (let i = 0; i < stars.length; i += fly ? 3 : 1) {   // parallax field drifting with the cursor
+      const s = stars[i];
+      const x = ((s.x * W + (mx - W / 2) * s.z * -.04 + now * (fly ? 3 : 6) * s.z) % W + W) % W;
+      const y = ((s.y * H + (my - H / 2) * s.z * -.04 + (fly ? Math.sin(now * s.z + i) * 14 : 0)) % H + H) % H;
+      g.globalAlpha = fly ? .25 + .6 * (Math.sin(now * (1 + s.z) + i) + 1) / 2 : s.z * .7;
+      if (fly) { circle(x, y, 1.5 + s.z * 2); g.fill(); } else g.fillRect(x, y, s.z * 2, s.z * 2);
+    }
+  }
+  g.globalAlpha = 1;
+  if (S && !S.over) {
+    g.save();
+    if (S.shake) g.translate(rand(-1, 1) * S.shake * 24, rand(-1, 1) * S.shake * 24);
+    S.targets.forEach(drawTarget);
+    for (const p of S.parts) { g.globalAlpha = Math.min(1, p.life * 2); g.fillStyle = p.color; g.fillRect(p.x - 2, p.y - 2, 4, 4); }
+    g.textAlign = 'center';
+    for (const f of S.floats) {
+      g.globalAlpha = Math.min(1, f.life * 2); g.fillStyle = f.color;
+      g.font = (f.big ? 'bold 42px' : 'bold 15px') + ' ui-monospace, Menlo, monospace';
+      g.fillText(f.text, f.x, f.y);
+    }
+    g.restore(); g.globalAlpha = 1;
+    $('hScore').textContent = `${S.score}  ·  lvl ${S.level}`;
+    $('hCombo').textContent = S.combo > 1 ? `combo ${S.combo}  ×${(1 + Math.min(S.combo, 20) * .1).toFixed(1)}` : '';
+    $('hTime').textContent = S.mode === 'arcade' ? S.left.toFixed(1) + 's' : 'zen · esc to finish';
+  }
+  // cursor trail: shows the path the ball actually traced
+  g.strokeStyle = THEMES[theme].accent; g.lineWidth = 2; g.lineCap = 'round';
+  for (let i = 1; i < trail.length; i++) {
+    g.globalAlpha = i / trail.length * .5;
+    g.beginPath(); g.moveTo(trail[i - 1].x, trail[i - 1].y); g.lineTo(trail[i].x, trail[i].y); g.stroke();
+  }
+  g.globalAlpha = 1;
+  if (trail.length > 1) trail.shift();
+}
+
+let last = performance.now() / 1000;
+requestAnimationFrame(function frame(ms) {
+  const now = ms / 1000, dt = Math.min(.05, now - last); last = now;
+  if (S && !S.over) update(dt);
+  draw(now);
+  requestAnimationFrame(frame);
+});
+</script>
+</body>
+</html>
